@@ -19,27 +19,3 @@ BDEPEND=">=dev-build/cmake-3.28"
 S="${WORKDIR}/${P}"
 
 inherit cmake
-
-src_unpack() {
-    default
-}
-
-src_prepare() {
-    default
-}
-
-src_configure() {
-    cmake_src_configure
-}
-
-src_compile() {
-    cmake_src_compile
-}
-
-src_install() {
-    cmake_src_install
-}
-
-pkg_postinst() {
-    elog "loggerlib ${PV} has been installed."
-}
