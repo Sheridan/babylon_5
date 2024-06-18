@@ -13,7 +13,7 @@ KEYWORDS="~amd64 ~x86"
 IUSE=""
 
 RDEPEND=""
-DEPEND="${RDEPEND} >=sys-libs/cpptoolslib-0.2.1"
+DEPEND="${RDEPEND} >=sys-libs/cpptoolslib-0.2.3"
 BDEPEND=">=dev-build/cmake-3.28"
 
 S="${WORKDIR}/${P}"
