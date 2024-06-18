@@ -14,7 +14,7 @@ IUSE=""
 
 RDEPEND=""
 DEPEND="${RDEPEND}"
-BDEPEND="dev-util/cmake"
+BDEPEND=">=dev-util/cmake-3.28"
 
 S="${WORKDIR}/${P}"
 
