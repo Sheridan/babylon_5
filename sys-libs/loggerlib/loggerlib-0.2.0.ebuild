@@ -13,7 +13,7 @@ KEYWORDS="~amd64 ~x86"
 IUSE=""
 
 RDEPEND=""
-DEPEND="${RDEPEND} dev-lang/cmake"
+DEPEND="${RDEPEND}"
 BDEPEND="dev-util/cmake"
 
 S="${WORKDIR}/${P}"
