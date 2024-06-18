@@ -3,9 +3,9 @@
 
 EAPI=8
 
-DESCRIPTION="Loggerlib is a simple logging library."
-HOMEPAGE="https://github.com/Sheridan/loggerlib"
-SRC_URI="https://github.com/Sheridan/loggerlib/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
+DESCRIPTION="Some simple methos for working with strings, networking, filesystem, etc..."
+HOMEPAGE="https://github.com/Sheridan/cpptoolslib"
+SRC_URI="https://github.com/Sheridan/cpptoolslib/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
 
 LICENSE="MIT"
 SLOT="0"
