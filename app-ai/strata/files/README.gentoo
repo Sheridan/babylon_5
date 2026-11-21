@@ -1,0 +1,100 @@
+Strata in the babylon_5 overlay
+===============================
+
+Layout
+------
+* /usr/bin/strata          - wrapper pinning STRATA_PYTHON to the ebuild's
+                             interpreter (override with STRATA_PYTHON=...)
+* /usr/share/strata/       - the Terminal tree (strata.py, CLI, Control,
+                             the API server and its web assets)
+* /usr/bin/strata-{plan,gguf,dequant} - engine utilities (every USE setup)
+* /usr/lib/strata/engine/<version>-linux-x86_64-<backend>/
+                           - engine component folder (USE=cuda/hip):
+                             the engine binary, BUILD.json and, with
+                             USE=vision, the picture reader
+
+Engine registration (USE=cuda or USE=hip)
+-----------------------------------------
+Strata resolves engines per user, so register the system-built component
+once:
+
+    strata components add-build /usr/lib/strata/engine/<folder>
+    strata components engines
+
+CUDA architectures: Portage's sandbox cannot see the GPU, so without an
+override the engine is compiled for the fallback list 80;86;89;120 (no PTX)
+with a warning. Pin exactly what you need via /etc/portage/package.env:
+
+    app-ai/strata strata-arch.conf      # STRATA_CUDA_ARCHS="120"
+
+nvcc (CUDA toolkit 12.8/12.9) rejects host compilers newer than gcc 14, so
+the CUDA build pins the whole tree to x86_64-pc-linux-gnu-gcc-14
+(sys-devel/gcc:14 is pulled in automatically). Set STRATA_CUDA_HOST_GCC in
+package.env if your toolkit wants a different gcc slot.
+
+Known issue: with Portage's pid-namespace sandbox, nvcc can hang in
+do_wait with zombie children during the kernel compile. If the build
+stalls at a high ninja step count for many minutes with zero CPU, add to
+/etc/portage/env/strata-pid-ns.conf:
+
+    PID_SANDBOX=disable
+
+and reference it from package.env next to the lines above.
+
+Without USE=cuda/hip Strata installs without an engine binary: upstream
+builds the engine only for CUDA or HIP. In that setup let `strata setup`
+obtain an engine, or rebuild the package with the flag. USE=vision without
+cuda/hip ships the picture reader as /usr/lib/strata/vision/strata-vision;
+copy it into an engine folder next to the engine binary to use it (the
+reader is looked up next to the engine, not on PATH).
+
+Server service (systemd)
+------------------------
+The package installs strata.service, enables it at multi-user.target and
+creates the system user strata (via acct-user/strata). The unit runs
+`strata serve` as that user with hardening; the engine component folder is
+registered into /var/lib/strata automatically on first start.
+
+* /etc/strata/daemon.conf      - STRATA_HOST / STRATA_PORT / STRATA_CONFIG
+* /etc/strata/strata.json      - engine config template (root:strata 0640)
+
+strata.json ships with REPLACE placeholders for the model path, tokenizer
+and model name - the service fails at start until you point them at real
+files, e.g. models under /var/lib/strata/models (own them with
+`chown -R strata:strata /var/lib/strata/models`). After editing:
+
+    systemctl restart strata
+
+By default the API listens on 127.0.0.1 only. To expose it (STRATA_HOST=
+0.0.0.0) the server refuses to start without an `"api_key"` entry added to
+/etc/strata/strata.json - set one first. Logs go to the journal:
+
+    journalctl -u strata
+
+Monitor (USE=monitor)
+---------------------
+`strata monitor` is a textual-based TUI. dev-python/textual is not in the
+Gentoo tree; this overlay expects it from ::guru, which is ~arch:
+
+    echo "=dev-python/textual-8.2.8 ~amd64" >> \
+        /etc/portage/package.accept_keywords/textual
+
+Models
+------
+No model weights ship with the package. Use `strata setup` or
+`strata models` to download them into the per-user data directory.
+
+Coexistence with other Strata installs
+--------------------------------------
+The CLI here shares the per-user data directory (~/.local/share/strata)
+with desktop/standalone installs. A newer CLI migrates instance configs on
+sight (e.g. the RAM budget rule), so if another Strata version owns that
+directory, run package smokes against an isolated home first:
+
+    HOME=$(mktemp -d) strata --help
+
+HIP note
+--------
+The HIP branch has not yet been exercised on real ROCm hardware by this
+overlay; report failures with the build log. STRATA_HIP_ARCHS overrides
+the default "gfx1100;gfx1201".

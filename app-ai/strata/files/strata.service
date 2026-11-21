@@ -1,0 +1,29 @@
+[Unit]
+Description=Strata local LLM inference server (web API)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=strata
+Group=strata
+Environment=HOME=/var/lib/strata
+Environment=STRATA_CONFIG=/etc/strata/strata.json
+EnvironmentFile=/etc/strata/daemon.conf
+StateDirectory=strata
+StateDirectoryMode=0750
+ExecStartPre=@ENGINE_PRE@
+ExecStart=/usr/bin/strata serve --engine strata --config ${STRATA_CONFIG} --host ${STRATA_HOST} --port ${STRATA_PORT}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/strata
+SupplementaryGroups=video render
+
+[Install]
+WantedBy=multi-user.target

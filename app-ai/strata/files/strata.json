@@ -1,0 +1,9 @@
+{
+"exe": "component:strata-engine",
+"args": ["--model", "/var/lib/strata/models/REPLACE/REPLACE.gguf"],
+"cwd": "/var/lib/strata",
+"tokenizer": "/var/lib/strata/models/REPLACE/tokenizer",
+"model_name": "REPLACE",
+"log": "/var/lib/strata/strata.log",
+"port": "8080"
+}
