@@ -14,7 +14,10 @@ Environment=STRATA_CONFIG=/etc/strata/strata.json
 EnvironmentFile=/etc/strata/daemon.conf
 StateDirectory=strata
 StateDirectoryMode=0750
+LogsDirectory=strata
+LogsDirectoryMode=0750
 ExecStartPre=@ENGINE_PRE@
+ExecStartPre=/bin/sh -c 'test -d /var/lib/strata/.strata/data/agent || mkdir -p /var/lib/strata/.strata/data/agent; ln -sfn /var/log/strata/harness.log /var/lib/strata/.strata/data/agent/harness.log'
 ExecStart=/usr/bin/strata serve --engine strata --config ${STRATA_CONFIG} --host ${STRATA_HOST} --port ${STRATA_PORT}
 Restart=on-failure
 RestartSec=5

@@ -71,6 +71,23 @@ By default the API listens on 127.0.0.1 only. To expose it (STRATA_HOST=
 
     journalctl -u strata
 
+Keep `"log"` out of strata.json so the engine inherits the server's stdout
+and everything lands in the journal.
+
+CUDA note (USE=cuda, sm_120 / RTX 50)
+-------------------------------------
+Upstream warns that engines built with CUDA < 13.0 can crash on long
+prompts on sm_120 cards (engine issues #220, #224) and prints a CMake
+warning when built with CUDA 12.x. Build against
+dev-util/nvidia-cuda-toolkit >= 13 when available (the bentoo repo has
+13.5) and rebuild this package afterwards; the installed engine ships
+its own CUDA runtime libs, so upgrading the toolkit does not break the
+running engine until you rebuild.
+ The one log strata insists on writing
+to a file (the web UI agent harness, .strata/data/agent/harness.log) is
+redirected by the unit into /var/log/strata/ (LogsDirectory), via a symlink
+re-created on every start.
+
 Monitor (USE=monitor)
 ---------------------
 `strata monitor` is a textual-based TUI. dev-python/textual is not in the
