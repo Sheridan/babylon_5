@@ -36,10 +36,22 @@ src_install() {
 	distutils-r1_src_install
 	insinto /usr/share/emerge-ai
 	doins -r prompts
+	doins "${S}/packaging/emerge-ai.json.default"
 }
 
 pkg_postinst() {
-	elog "emerge-ai configuration: /etc/portage/emerge-ai.json (chmod 0600, root)."
+	local cfg="${ROOT}/etc/portage/emerge-ai.json"
+	if [[ ! -e ${cfg} ]]; then
+		if install -m 0600 -o root -g root \
+			"${ROOT}/usr/share/emerge-ai/emerge-ai.json.default" "${cfg}"; then
+			elog "Created /etc/portage/emerge-ai.json (0600) from the packaged default."
+		else
+			elog "Could not create /etc/portage/emerge-ai.json; copy"
+			elog "  /usr/share/emerge-ai/emerge-ai.json.default manually (chmod 0600)."
+		fi
+	else
+		elog "/etc/portage/emerge-ai.json already exists - left untouched."
+	fi
 	elog "Set \"endpoint\" (OpenAI-compatible base URL) and \"model\" there;"
 	elog "without an endpoint every LLM call fails explicitly by design."
 	elog
