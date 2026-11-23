@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>gorlov.maxim@gmail.com</email>
+		<name>Горлов Максим</name>
+	</maintainer>
+	<longdescription>OpenSpec is a spec-driven development (SDD) CLI for AI
+	coding assistants: it keeps planning artifacts (proposal, specs, design,
+	tasks) in an openspec/ folder reviewed before implementation. This package
+	ships the prebuilt standalone release binary.</longdescription>
+	<upstream>
+		<remote-id type="github">Fission-AI/OpenSpec</remote-id>
+	</upstream>
+</pkgmetadata>
