@@ -55,6 +55,11 @@ pkg_postinst() {
 	elog "Set \"endpoint\" (OpenAI-compatible base URL) and \"model\" there;"
 	elog "without an endpoint every LLM call fails explicitly by design."
 	elog
+	elog "Run 'emerge-ai --help' for the wrapper flags: -p/--pretend and -a/--ask"
+	elog "are intercepted (plan + digest), plus --changelog, --rollback, --resume,"
+	elog "--noninteractive and --i-understand-the-risks (autonomy). Other arguments"
+	elog "go to emerge verbatim."
+	elog
 	elog "Optional tools (not hard deps, features degrade without them):"
 	elog "  sys-fs/btrfs-progs  - read-only snapshots for tier 1-4 merges"
 	elog "  app-portage/genlop  - merge-time estimates in the plan digest"
