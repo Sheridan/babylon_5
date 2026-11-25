@@ -50,10 +50,15 @@ reader is looked up next to the engine, not on PATH).
 
 Server service (systemd)
 ------------------------
-The package installs strata.service, enables it at multi-user.target and
-creates the system user strata (via acct-user/strata). The unit runs
-`strata serve` as that user with hardening; the engine component folder is
-registered into /var/lib/strata automatically on first start.
+The package installs strata.service and creates the system user strata (via
+acct-user/strata); it does not enable the service, because a web server
+starting on every boot must be an explicit decision:
+
+    systemctl enable --now strata
+
+The unit runs `strata serve` as that user with hardening; the engine
+component folder is registered into /var/lib/strata automatically on first
+start (by /usr/lib/strata/engine-register, run as ExecStartPre).
 
 * /etc/strata/daemon.conf      - STRATA_HOST / STRATA_PORT / STRATA_CONFIG
 * /etc/strata/strata.json      - engine config template (root:strata 0640)
@@ -67,12 +72,30 @@ files, e.g. models under /var/lib/strata/models (own them with
 
 By default the API listens on 127.0.0.1 only. To expose it (STRATA_HOST=
 0.0.0.0) the server refuses to start without an `"api_key"` entry added to
-/etc/strata/strata.json - set one first. Logs go to the journal:
+/etc/strata/strata.json - set one first. The shipped strata.json sets
+`"log": "/var/lib/strata/strata.log"`, so the server and the engine append
+their output to that file (rotated by hand or logrotate, Portage does not
+touch it); the journal keeps the unit-level messages:
 
     journalctl -u strata
 
-Keep `"log"` out of strata.json so the engine inherits the server's stdout
-and everything lands in the journal.
+To keep everything in the journal instead, drop the `"log"` key from
+strata.json and the engine inherits the server's stdout.
+
+Configuration updates
+---------------------
+/etc/strata is under Portage's CONFIG_PROTECT: your edits to strata.json
+and daemon.conf survive an upgrade. The new package version's files land
+next to them as ._cfg0000_strata.json (and ._cfg0000_daemon.conf); merge
+them with etc-update or dispatch-conf:
+
+    etc-update
+
+If you kept a heavily edited strata.json and only want one new upstream
+key, copy that key across by hand instead of taking the new file whole.
+The unit file itself is not protected - it lives under /usr and is
+replaced on every merge; keep local overrides in
+/etc/systemd/system/strata.service.d/ drop-ins (systemctl edit strata).
 
 CUDA note (USE=cuda, sm_120 / RTX 50)
 -------------------------------------
@@ -83,18 +106,25 @@ dev-util/nvidia-cuda-toolkit >= 13 when available (the bentoo repo has
 13.5) and rebuild this package afterwards; the installed engine ships
 its own CUDA runtime libs, so upgrading the toolkit does not break the
 running engine until you rebuild.
- The one log strata insists on writing
-to a file (the web UI agent harness, .strata/data/agent/harness.log) is
-redirected by the unit into /var/log/strata/ (LogsDirectory), via a symlink
-re-created on every start.
+
+Minimum NVIDIA driver
+---------------------
+When registering the engine, package_engine.py records a minimum driver
+version (default 570.124.06, the oldest R570 branch release that CUDA
+12.8 toolkits require); strata refuses to start an engine whose driver
+is older. If your driver branch is older but works, or you built against
+a newer toolkit, override the threshold in /etc/portage/package.env
+(STRATA_NVIDIA_DRIVER="570.86") and rebuild - a wrong threshold only
+relaxes or tightens this self-check, it does not change what the engine
+links against.
 
 Monitor (USE=monitor)
 ---------------------
-`strata monitor` is a textual-based TUI. dev-python/textual is not in the
-Gentoo tree; this overlay expects it from ::guru, which is ~arch:
+`strata monitor` is a textual-based TUI. The overlay vendors
+dev-python/textual-8.2.8 (a pure-python package built from the GitHub
+release), so no external repository is needed:
 
-    echo "=dev-python/textual-8.2.8 ~amd64" >> \
-        /etc/portage/package.accept_keywords/textual
+    emerge -av dev-python/textual
 
 Models
 ------

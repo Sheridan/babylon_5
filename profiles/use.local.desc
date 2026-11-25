@@ -1,4 +1,4 @@
 app-ai/strata:cuda - Build the CUDA inference engine for NVIDIA GPUs
 app-ai/strata:hip - Build the ROCm/HIP inference engine for AMD GPUs
-app-ai/strata:vision - Build the CUDA vision encoder component
+app-ai/strata:vision Build the image reader for the multimodal web UI, installed next to the engine component
 app-ai/strata:monitor - Enable the textual based strata monitor TUI

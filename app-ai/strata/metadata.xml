@@ -8,10 +8,14 @@
 	<longdescription>Strata is a local LLM inference server and toolkit: a
 	python terminal/CLI, an HTTP API server and a C++ inference engine
 	built for CUDA or HIP.</longdescription>
+	<comments>The CUDA and HIP builds bundle the vendor GPU runtime
+	libraries into the engine component folder, so parts of the installed
+	files are covered by the NVIDIA-CUDA / AMD-GPU-PRO-EULA licenses in
+	addition to Strata's own MIT license.</comments>
 	<use>
 		<flag name="cuda">Build the CUDA inference engine for NVIDIA GPUs</flag>
 		<flag name="hip">Build the ROCm/HIP inference engine for AMD GPUs</flag>
-		<flag name="vision">Build the CUDA vision encoder component</flag>
+		<flag name="vision">Build the image reader for the multimodal web UI, installed next to the engine component</flag>
 		<flag name="monitor">Enable the textual based strata monitor TUI</flag>
 	</use>
 	<upstream>

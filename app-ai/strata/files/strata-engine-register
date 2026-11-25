@@ -1,0 +1,35 @@
+#!/bin/sh
+# Register the system-built engine component in strata's state directory.
+# Called as strata.service's ExecStartPre as root, before the server starts.
+#
+# Engine registration is a convenience: strata resolves components per user
+# and can run without this entry (users may register their own builds). The
+# script therefore never fails the unit: every error path prints to stderr
+# (visible in `journalctl -u strata`) and exits 0. The stamp file makes the
+# registration happen once; removing it repeats the registration after a
+# component folder changes.
+set -u
+
+STRATA_HOME=/var/lib/strata
+ENGINE_ROOT=/usr/lib/strata/engine
+STAMP="${STRATA_HOME}/.strata-engine-added"
+
+[ -e "${STAMP}" ] && exit 0
+
+# newest component folder wins when several backends were installed
+comp="$(ls -1dt "${ENGINE_ROOT}"/*/ 2>/dev/null | head -n 1 || true)"
+if [ -z "${comp}" ]; then
+	# nothing installed under this prefix: silent no-op
+	exit 0
+fi
+comp="${comp%/}"
+
+out="$(/usr/bin/strata components add-build "${comp}" 2>&1)"
+rc=$?
+if [ ${rc} -ne 0 ]; then
+	echo "strata: engine registration failed (code ${rc}): ${out}" >&2
+	exit 0
+fi
+
+touch "${STAMP}" 2>/dev/null || echo "strata: could not write ${STAMP}" >&2
+exit 0

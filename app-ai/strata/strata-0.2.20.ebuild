@@ -8,7 +8,7 @@ HOMEPAGE="https://github.com/Niko1221/Strata"
 SRC_URI="https://github.com/Niko1221/Strata/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
 S="${WORKDIR}/Strata-${PV}"
 
-LICENSE="MIT"
+LICENSE="MIT cuda? ( NVIDIA-CUDA ) hip? ( AMD-GPU-PRO-EULA )"
 SLOT="0"
 KEYWORDS="~amd64"
 IUSE="cuda hip vision monitor"
@@ -18,9 +18,9 @@ REQUIRED_USE="
 	${PYTHON_REQUIRED_USE}
 "
 
-BDEPEND="dev-build/ninja"
 DEPEND="
 	${PYTHON_DEPS}
+	acct-group/strata
 	cuda? ( >=dev-util/nvidia-cuda-toolkit-12.8 sys-devel/gcc:14= )
 	hip? ( >=dev-util/hip-6 )
 "
@@ -93,7 +93,12 @@ src_configure() {
 		-DSTRATA_PORTABLE=ON
 		-DSTRATA_ENABLE_CUDA="$(usex cuda ON OFF)"
 		-DSTRATA_ENABLE_HIP="$(usex hip ON OFF)"
+		# $ORIGIN travels into the engine folder so the bundled libraries resolve
+		# without LD_LIBRARY_PATH; it must cover shared objects and modules too,
+		# not just the executable — the copied .so files import each other
 		"-DCMAKE_EXE_LINKER_FLAGS=${LDFLAGS} -Wl,-rpath,'\$ORIGIN' -Wl,--enable-new-dtags"
+		"-DCMAKE_SHARED_LINKER_FLAGS=${LDFLAGS} -Wl,-rpath,'\$ORIGIN' -Wl,--enable-new-dtags"
+		"-DCMAKE_MODULE_LINKER_FLAGS=${LDFLAGS} -Wl,-rpath,'\$ORIGIN' -Wl,--enable-new-dtags"
 	)
 	use cuda && mycmakeargs+=(
 		"-DCMAKE_CUDA_ARCHITECTURES=${cuda_cmake}"
@@ -127,7 +132,9 @@ src_configure() {
 			-DCMAKE_INSTALL_PREFIX="${EPREFIX}/usr"
 			-DCMAKE_C_FLAGS="${CFLAGS}"
 			-DCMAKE_CXX_FLAGS="${CXXFLAGS}"
-			-DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}"
+			-DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS} -Wl,-rpath,\$ORIGIN -Wl,--enable-new-dtags"
+			-DCMAKE_SHARED_LINKER_FLAGS="${LDFLAGS} -Wl,-rpath,\$ORIGIN -Wl,--enable-new-dtags"
+			-DCMAKE_MODULE_LINKER_FLAGS="${LDFLAGS} -Wl,-rpath,\$ORIGIN -Wl,--enable-new-dtags"
 			-DSTRATA_PORTABLE=ON
 			-DSTRATA_VISION_METAL=OFF
 			-DSTRATA_VISION_ORACLES=OFF
@@ -146,13 +153,18 @@ src_configure() {
 src_compile() {
 	# only the shipped targets, not the bench/parity programs
 	local targets=( strata-gguf strata-dequant strata-plan )
-	use cuda || use hip && targets+=( strata )
+	if use cuda || use hip; then
+		targets+=( strata )
+	fi
 	cmake_src_compile "${targets[@]}"
 
 	if use vision; then
 		local vtarget=strata-vision
 		use hip && vtarget=strata-vision-hip
-		cmake --build "${VISION_BUILD}" --target "${vtarget}" || die "vision build failed"
+		# the main engine goes through cmake_src_compile which honours MAKEOPTS;
+		# this manual second build needs --parallel or CMake compiles one file at a time
+		cmake --build "${VISION_BUILD}" --parallel "$(makeopts_jobs)" \
+			--target "${vtarget}" || die "vision build failed"
 	fi
 }
 
@@ -263,7 +275,10 @@ EOF
 "portable": true
 }
 EOF
-			min_driver=( --min-driver "nvidia=570.124.06" )
+			# floor for the NVIDIA driver the component needs; override per
+			# machine with STRATA_NVIDIA_DRIVER (e.g. in /etc/portage/env/) when
+			# the component is built against a newer CUDA userland than default
+			min_driver=( --min-driver "nvidia=${STRATA_NVIDIA_DRIVER:-570.124.06}" )
 		else
 			backend=hip
 			local gfx_json=""
@@ -309,27 +324,14 @@ EOF
 		dobin "${vbin}"
 	fi
 
-	# system service: unit with the engine folder baked in, address/port
-	# env file and a server config template the sysadmin fills in
-	local engine_pre=""
+	# system service: static unit, address/port env file and a server config
+	# template the sysadmin fills in. Engine registration is the helper's job
+	# (runtime decision), so the unit needs no build-time templating.
 	if use cuda || use hip; then
-		local engine_dir="" comp
-		for comp in "${ED}"/usr/lib/strata/engine/*/; do
-			engine_dir="${EPREFIX}/usr/lib/strata/engine/$(basename "${comp%/}")"
-			break
-		done
-		[[ -n ${engine_dir} ]] || die "no engine component was installed"
-		engine_pre="-/bin/sh -c 'test -e ${EPREFIX}/var/lib/strata/.strata-engine-added || ${EPREFIX}/usr/bin/strata components add-build ${engine_dir} >/dev/null && touch ${EPREFIX}/var/lib/strata/.strata-engine-added'"
+		exeinto /usr/lib/strata
+		newexe "${FILESDIR}/strata-engine-register" engine-register
 	fi
-	local unit="${T}/strata.service"
-	if [[ -n ${engine_pre} ]]; then
-		local sed_pre="${engine_pre//|/\\|}"
-		sed_pre="${sed_pre//&/\\&}"
-		sed "s|@ENGINE_PRE@|${sed_pre}|" "${FILESDIR}/strata.service" > "${unit}" || die
-	else
-		sed '/@ENGINE_PRE@/d' "${FILESDIR}/strata.service" > "${unit}" || die
-	fi
-	systemd_dounit "${unit}"
+	systemd_dounit "${FILESDIR}/strata.service"
 	insinto /etc/strata
 	doins "${FILESDIR}/daemon.conf" "${FILESDIR}/strata.json"
 	fperms 0640 /etc/strata/strata.json
@@ -342,7 +344,8 @@ pkg_postinst() {
 	if use cuda || use hip; then
 		elog "Strata's engine was installed as a component folder under"
 		elog "  ${EPREFIX}/usr/lib/strata/engine/"
-		elog "Register it once per user with:"
+		elog "strata.service registers it on first start (helper"
+		elog "/usr/lib/strata/engine-register); other users can register it with:"
 		elog "  strata components add-build ${EPREFIX}/usr/lib/strata/engine/<folder>"
 	else
 		elog "Built without the cuda or hip USE flag: Strata has no CPU-only"
@@ -354,16 +357,19 @@ pkg_postinst() {
 	if ! use monitor; then
 		ewarn "USE=-monitor: 'strata monitor' needs dev-python/textual."
 	fi
-	elog "The web server runs as a systemd service:"
-	elog "  systemctl start strata   (enabled at multi-user.target)"
+	elog "The web server is packaged as strata.service but not enabled"
+	elog "automatically - starting a server on every boot needs explicit"
+	elog "consent (exposure, resource use):"
+	elog "  systemctl enable --now strata"
 	elog "Address/port: ${EPREFIX}/etc/strata/daemon.conf; the engine config"
 	elog "${EPREFIX}/etc/strata/strata.json still holds REPLACE placeholders"
 	elog "(model path, tokenizer) - fill them in and put models under"
 	elog "${EPREFIX}/var/lib/strata (owned by user strata)."
-	if [[ -d /run/systemd/system ]]; then
-		# ln instead of systemctl: portage's sandbox can block the D-Bus call
-		ln -sfn "${EPREFIX}/usr/lib/systemd/system/strata.service" \
-			"${ROOT}/etc/systemd/system/multi-user.target.wants/strata.service" 2>/dev/null || \
-			ewarn "could not enable strata.service; run: systemctl enable strata"
+	# the manager must notice a replaced unit file; the guarded call degrades
+	# to a warning when the sandbox blocks the D-Bus/private-socket hop
+	if [[ -d ${ROOT}/run/systemd/system ]]; then
+		systemctl daemon-reload -q 2>/dev/null \
+			|| ewarn "could not reach systemd; run: systemctl daemon-reload"
 	fi
+	systemd_update_catalog
 }
