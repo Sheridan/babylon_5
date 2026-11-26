@@ -26,6 +26,6 @@
 ## Impact
 
 - `app-ai/strata/files/`: новые `strata@.service` и скрипты; удаление `strata.service`, `strata.json`, `daemon.conf`; правки `strata-engine-register` (комментарий про пользователя) и `README.gentoo`.
-- `app-ai/strata/strata-0.2.20.ebuild`: установка скриптов (`dobin`), состав `/etc/strata`, текст `pkg_postinst`; CONFIG_PROTECT для `/etc/strata` сохраняется.
+- `app-ai/strata/strata-0.2.22.ebuild` (переименован из 0.2.20 — версия поднята в этом же change, интерфейс каталога/setup.py/`serve` сверен с 0.2.22): установка скриптов (`dobin`), состав `/etc/strata`, текст `pkg_postinst`; CONFIG_PROTECT для `/etc/strata` сохраняется; `Manifest` перегенерирован под новый distfile.
 - Зависимости: новых нет; каталог моделей читается python-хелпером из поставляемого `/usr/share/strata/setup.py`.
 - Порядок: накладывается поверх изменений `no-service-auto-enable` и `docs-config-consistency` (те же юнит/README/spec) — начинать после их архивации.

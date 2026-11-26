@@ -137,7 +137,7 @@ under MIT. Every component folder carries LICENSE.txt (Strata's MIT),
 LICENSE-BUNDLED.txt (which library belongs to which license), the CUDA
 EULA and upstream notices for libatomic/libz; the same texts are
 installed under /usr/share/licenses/<PACKAGE>-<VERSION>/ (for example
-/usr/share/licenses/strata-0.2.20/).
+/usr/share/licenses/strata-0.2.22/).
 
 Models
 ------

@@ -32,7 +32,8 @@
       пары `family/model`, для установленных — пометка INSTALLED с путём; exit коды 0/2/3 по spec.
       (Сделано 26.11: harness — вывод всех 19 пар 0.2.20, фильтр по family, exit 2 для неизвестного family,
       exit 3 при недоступном каталоге через `STRATA_CODE`, пометка INSTALLED. Реальный `/usr/share/strata`
-      на хосте — dev-дерево, harness использует распакованный tarball 0.2.20.)
+      на хосте — dev-дерево, harness использует распакованный tarball 0.2.20; 26.11 harness перегнан на tarball
+      0.2.22 — вывод каталога побайтово совпал с 0.2.20.)
 - [ ] 2.2 Написать `files/strata-download-model <family>/<model>`: проверка пары по каталогу до создания
       каталогов; отказ при существующем инстансе и при чужом `strata-*.json`; два `install -d -m 0750 -o strata -g strata`
       (отдельно `<id>` и `<id>/Strata-data` — GNU install красит владельца только последнего компонента);
@@ -97,6 +98,16 @@
 - [x] 3.3 Удалить `files/strata.service`, `files/daemon.conf`, `files/strata.json` (git rm); `metadata.xml` не требует изменений; `Manifest` перегенерирован.
       (Сделано 26.11: `grep -rn 'strata.service\b|etc/strata/daemon.conf|etc/strata/strata.json' app-ai/strata/`
       даёт только упоминания миграции в elog и README.gentoo (README — раздел 4); pkgcheck чист.)
+- [x] 3.4 Поднять версию пакета до 0.2.22 (решение пользователя от 26.11 — сразу upstream-версия, а не -r1):
+      проверить дрейф интерфейса на 0.2.22 (каталог, флаги `setup.py`/`serve`, id-нейминг, requirements, CMake-опции),
+      переименовать ebuild, положить distfile, перегенерировать `Manifest`, перегнать harness на дереве 0.2.22.
+      (Сделано 26.11: вывод `strata-catalog` над 0.2.20 и 0.2.22 побайтово совпал (19 пар); `--family/--model/
+      --data-dir/--yes/--no-start`, `STRATA_CONTROL_INSTALL`/`STRATA_INSTALL_DIR`, `tag = fam["tag"] + model`,
+      `serve --profile/--host/--port` и `SUPPORTED_SELECTIONS` без изменений (в `models.py` тронут только
+      разбор tokenizer-метаданных); requirements* идентичны; CMake-опции движка и vision на месте; новые
+      `find_package` нет. `git mv` ebuild → `strata-0.2.22.ebuild` (содержимое без правок — PV не захардкожен),
+      distfile `strata-0.2.22.tar.gz` (44061460 Б) в DISTDIR, `Manifest` перегенерирован; harness с
+      `STRATA_CODE` на 0.2.22 — 50+45 проверок, exit 0.)
 
 ## 4. Документация
 
@@ -112,7 +123,7 @@
 Статические и fixture-эквиваленты этих проверок закрыты в разделах 1–3 (harness
 `/tmp/opencode/test-model-management.sh`: 50 проверок пользовательской фазы + 45 root-фазы, exit 0).
 
-- [ ] 5.1 Установка и BREAKING: `emerge =app-ai/strata-0.2.20` на хосте с остатками старого setup — merge не пишет `/etc/strata/{daemon.conf,strata.json}`, `strata.service` недоступен (`systemctl start strata` → not found), elog содержит BREAKING и workflow.
+- [ ] 5.1 Установка и BREAKING: `emerge =app-ai/strata-0.2.22` на хосте с остатками старого setup — merge не пишет `/etc/strata/{daemon.conf,strata.json}`, `strata.service` недоступен (`systemctl start strata` → not found), elog содержит BREAKING и workflow.
 - [ ] 5.2 Полный workflow на модели до 1 ГБ: list-available → download-model (weights в `<id>/Strata-data`, вывод `--data-dir` подтверждён логом) → `systemctl start strata@<id>` → ответ API на `127.0.0.1:8080` → `journalctl -u strata@<id>` содержит строки сервера → stop → rm-model (обе папки удалены, соседний инстанс жив).
 - [ ] 5.3 Изоляция: два инстанса с разными daemon.conf (порты 8080/8081) работают одновременно; конфиги и weights не пересекаются; каталог компонентов и штамп движка общие.
 - [ ] 5.4 Отказы на живом хосте: `download-model` на неизвестную пару, на занятое имя, `--help` без root, `rm-model` активного инстанса и некорректного id — сообщения и коды возврата по spec (на fixture-уровне все ветки уже закрыты root-фазой harness).
