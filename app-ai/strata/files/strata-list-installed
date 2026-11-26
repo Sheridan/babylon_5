@@ -1,0 +1,99 @@
+#!/bin/bash
+# List model instances already installed for strata@.service.
+# An instance is installed when its state directory /var/lib/strata/<id>
+# carries the run config strata-<id>.json that strata-download-model writes;
+# that config is exactly what the service starts.
+set -u
+
+usage() {
+	cat <<'EOF'
+usage: strata-list-installed [--ids-only]
+
+Lists model instances installed for the strata@<id> service, one per line:
+
+    <id>    <port>    <disk>    <status>
+
+<port> is the STRATA_PORT of the instance's env file (/etc/strata/<id>/
+daemon.conf, 8080 by default - one running instance holds one port). <disk> is
+the space its weights occupy (shown when readable: strata's files are 0750).
+<status> is "running" while systemctl reports the instance active, "stopped"
+otherwise - being stopped does not make an instance disappear, it stays
+installed (and keeps its port) until strata-rm-model removes it.
+
+--ids-only  print only the instance ids, one per line (for scripting).
+
+The listing scans the instance state tree (default /var/lib/strata, override
+with STRATA_LIB); entries not owned by the service user are reported as
+"foreign (not owned by strata)" instead of being offered to the service.
+
+Part of app-ai/strata; runs without root.
+EOF
+}
+
+ids_only=0
+case "${1:-}" in
+	--ids-only) ids_only=1 ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	"") ;;
+	*)
+		echo "strata-list-installed: unknown argument: $1 (see --help)" >&2
+		exit 2
+		;;
+esac
+
+lib="${STRATA_LIB:-/var/lib/strata}"
+etc="${STRATA_ETC:-/etc/strata}"
+service_user="${STRATA_SERVICE_USER:-strata}"
+
+if [[ ! -d ${lib} ]]; then
+	[[ ${ids_only} == 1 ]] || echo "no instances installed (${lib} does not exist)"
+	exit 0
+fi
+
+found=0
+for dir in "${lib}"/*/; do
+	[[ -d ${dir} ]] || continue
+	id="${dir%/}"
+	id="${id##*/}"
+	# the shared engine stamp and hidden entries are not instances
+	case "${id}" in .* | enginemount) continue ;; esac
+	cfg="${dir}strata-${id}.json"
+	[[ -f ${cfg} ]] || continue
+
+	if [[ ${ids_only} == 1 ]]; then
+		echo "${id}"
+		found=1
+		continue
+	fi
+
+	status="stopped"
+	if systemctl is-active -q "strata@${id}.service" 2>/dev/null; then
+		status="running"
+	fi
+
+	# an instance the service could not read is not ours to serve
+	owner="$(stat -c '%U' "${dir}" 2>/dev/null || echo '?')"
+	if [[ ${owner} != "${service_user}" ]]; then
+		status="foreign (not owned by ${service_user})"
+	fi
+
+	# the port the instance listens on: one port, one running instance
+	port="$(sed -n 's/^[[:space:]]*STRATA_PORT=//p' "${etc}/${id}/daemon.conf" 2>/dev/null | tail -n 1)"
+	port="${port:-8080}"
+
+	# what the weights cost on disk; strata's tree is 0750, so other users
+	# only see that something is there
+	disk="$(du -sh "${dir}/Strata-data" 2>/dev/null | cut -f1)"
+	disk="${disk:--}"
+
+	printf '%s\t%s\t%s\t%s\n' "${id}" "${port}" "${disk}" "${status}"
+	found=1
+done
+
+if [[ ${found} == 0 && ${ids_only} == 0 ]]; then
+	echo "no instances installed (download one with strata-download-model <family>/<model>)"
+fi
+exit 0

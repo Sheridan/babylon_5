@@ -1,0 +1,86 @@
+#!/bin/bash
+# List the catalog models a host can install as strata@<id> instances, marking
+# what is already installed. The catalog itself is read by strata-catalog.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+usage: strata-list-available [family]
+
+Lists the family/model pairs the installed app-ai/strata offers, as read from
+its catalog (setup.py + the supported-selections list), so the list matches
+this machine exactly:
+
+    FAMILY    the distribution of the weights (qwen, swift, coder, unsloth,
+              gyro, ...); "strata-list-available <family>" lists one family
+    MODEL     what strata-download-model takes after the slash
+    DOWNLOAD  weights size in GB (the download takes a while)
+    RAM       rough RAM needed to serve it on CPU
+    VRAM      rough VRAM needed to serve it from the GPU (the "arena")
+    ID        the strata@<id> instance strata-download-model will create
+    LICENSE   gated = the license must be accepted upstream first and the
+              download needs a Hugging Face token (HF_TOKEN); the text is in
+              strata-models-inspect <id> and at the upstream repository
+    INSTALLED yes = ready to start; partial = an interrupted download,
+              re-run strata-download-model to resume
+
+Next steps for one line:
+
+    strata-models-inspect <id>            what one instance costs and holds
+    strata-download-model <family>/<model>
+    systemctl start strata@<id>
+
+Reads only the installed package and strata's state directory - any user can
+run it, no root needed.
+EOF
+}
+
+case "${1:-}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+esac
+family="${1:-}"
+[[ $# -le 1 && (${family} != -* || -z ${family}) ]] || {
+	echo "strata-list-available: expected at most one family name (see --help)" >&2
+	exit 2
+}
+
+catalog="${STRATA_CATALOG:-/usr/lib/strata/strata-catalog}"
+lib="${STRATA_LIB:-/var/lib/strata}"
+[[ -x ${catalog} ]] || {
+	echo "strata-list-available: ${catalog} is missing - app-ai/strata does not seem to be installed" >&2
+	exit 1
+}
+
+# one TAB-separated line per pair: family model id download ram arena gate about
+if ! rows="$( "${catalog}" models ${family:+"${family}"})"; then
+	echo "strata-list-available: '${family}' is not a supported family" >&2
+	echo "  families: $( "${catalog}" families | cut -f1 | tr '\n' ' ')" >&2
+	exit 2
+fi
+
+printf '%-9s %-15s %8s %5s %6s %-24s %-7s %s\n' \
+	FAMILY MODEL DOWNLOAD RAM VRAM ID LICENSE INSTALLED
+while IFS=$'\t' read -r f m id dl ram arena gate _; do
+	[[ -n ${f} ]] || continue
+	license=${gate}
+	[[ ${license} == - ]] && license=free
+	installed=""
+	if [[ -f ${lib}/${id}/strata-${id}.json ]]; then
+		installed="yes"
+	elif [[ -d ${lib}/${id}/Strata-data ]]; then
+		installed="partial"
+	fi
+	printf '%-9s %-15s %8s %5s %6s %-24s %-7s %s\n' \
+		"${f}" "${m}" "${dl}" "${ram}" "${arena}" "${id}" "${license}" "${installed}"
+done <<<"${rows}"
+
+cat <<'EOF'
+
+Sizes are the catalog's own numbers (GB). gated models need the license
+accepted at Hugging Face and a token (HF_TOKEN) before they download.
+Install a line: strata-download-model <family>/<model>; costs of one
+instance: strata-models-inspect <id>.
+EOF

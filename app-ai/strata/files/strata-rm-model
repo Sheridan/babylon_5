@@ -1,0 +1,118 @@
+#!/bin/bash
+# Remove an installed strata@<id> model instance.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+usage: strata-rm-model [-y|--yes] <id>
+
+Removes the model instance <id> completely:
+
+    /var/lib/strata/<id>/              the weights and the run config
+    /etc/strata/<id>/daemon.conf       the instance's address/port file
+
+Nothing else is touched - other instances and the shared engine stay as they
+are; the package itself removes nothing automatically.
+
+Refusals: an id that is not installed; an instance whose files are not owned
+by strata (someone's development tree is not the service's to delete); an env
+file that is world-readable while holding a token.
+
+-y, --yes   no confirmation prompt (for scripting)
+
+Run strata-models-inspect <id> first to see exactly what goes away.
+The instance should be stopped before removal
+(systemctl stop strata@<id>; a running instance is refused).
+
+Runs as root (the files belong to strata, 0750).
+EOF
+}
+
+yes=0
+id=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-y | --yes) yes=1 ;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		-*)
+			echo "strata-rm-model: unknown option: $1 (see --help)" >&2
+			exit 2
+			;;
+		*)
+			[[ -z ${id} ]] || {
+				echo "strata-rm-model: exactly one id expected" >&2
+				exit 2
+			}
+			id="$1"
+			;;
+	esac
+	shift
+done
+[[ -n ${id} ]] || {
+	usage >&2
+	exit 2
+}
+
+if [[ ${EUID} -ne 0 ]]; then
+	echo "strata-rm-model: must run as root (the instance files are strata's, 0750)" >&2
+	exit 1
+fi
+
+lib="${STRATA_LIB:-/var/lib/strata}"
+etc="${STRATA_ETC:-/etc/strata}"
+service_user="${STRATA_SERVICE_USER:-strata}"
+dir="${lib}/${id}"
+cfg="${dir}/strata-${id}.json"
+conf_dir="${etc}/${id}"
+conf="${conf_dir}/daemon.conf"
+
+if [[ ! -f ${cfg} ]]; then
+	echo "strata-rm-model: '${id}' is not an installed instance (no ${cfg})" >&2
+	echo "installed instances: strata-list-installed" >&2
+	exit 1
+fi
+if systemctl is-active -q "strata@${id}.service" 2>/dev/null; then
+	echo "strata-rm-model: strata@${id} is running - stop it first:" >&2
+	echo "  systemctl stop strata@${id}" >&2
+	exit 1
+fi
+owner="$(stat -c '%U' "${dir}" 2>/dev/null || echo '?')"
+if [[ ${owner} != "${service_user}" ]]; then
+	echo "strata-rm-model: ${dir} belongs to ${owner}, not ${service_user} - refusing" >&2
+	echo "  (stray directories in ${lib} are not offered to the service, and not ours to delete)" >&2
+	exit 1
+fi
+
+world_ok=1
+if [[ -f ${conf} && $(stat -c '%a' "${conf}") =~ [4567]$ ]]; then
+	if grep -qE '^[[:space:]]*(export[[:space:]]+)?(HF_TOKEN|APP_TOKEN)=' "${conf}"; then
+		world_ok=0
+	fi
+fi
+
+if [[ ${world_ok} == 0 ]]; then
+	echo "strata-rm-model: ${conf} is world-readable and holds a token - refusing" >&2
+	echo "  chmod 0640 ${conf} first, so removing it cannot leak the token unnoticed" >&2
+	exit 1
+fi
+
+echo "removing strata@${id}:"
+for path in "${dir}" "${conf_dir}"; do
+	[[ -e ${path} ]] && echo "  ${path}"
+done
+if [[ ${yes} != 1 ]]; then
+	read -rp "Delete these files? [y/N] " reply
+	[[ ${reply,,} == y* ]] || exit 1
+fi
+
+rm -rf -- "${dir}"
+[[ -d ${conf_dir} ]] && rm -rf -- "${conf_dir}"
+
+# the instance tree is gone, so anything left in the instance directory that
+# only existed for it can go too; the engine stamp and the mount point stay
+find "${lib}" -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null || true
+
+echo "removed: ${id}"

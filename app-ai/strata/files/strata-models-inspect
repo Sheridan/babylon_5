@@ -1,0 +1,116 @@
+#!/bin/bash
+# Everything one strata@<id> instance is: catalog facts, the files on disk with
+# their sizes, the service state. Read-only; run it before strata-rm-model.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+usage: strata-models-inspect <id>
+
+Reports the instance <id> (see strata-list-available for the ids):
+
+  catalog    which family/model the id was derived from, the model's size
+             numbers (download, RAM, VRAM) and its license line, when the
+             catalog carries one
+  instance   the run config, the weights folder with its real size on disk,
+             the per-instance env file (/etc/strata/<id>/daemon.conf) with
+             the port it sets, the shared engine component
+  service    whether strata@<id>.service is currently running
+
+Run it before removing anything: strata-rm-model <id> deletes exactly the
+paths listed here. Sizes of strata's files are only readable when running as
+root (or as strata); other users see the rest.
+
+Exits 1 for an id the catalog does not produce and for an id whose instance
+is not installed (its run config is gone), so scripts can rely on a zero
+status meaning "this instance exists"; the catalog facts are printed either
+way to say what the id would be.
+
+Examples: strata-models-inspect q2_0, strata-models-inspect unsloth-ud-q5_k_xl
+EOF
+}
+
+case "${1:-}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-*)
+		echo "strata-models-inspect: unknown option: $1 (see --help)" >&2
+		exit 2
+		;;
+esac
+[[ $# -eq 1 ]] || {
+	usage >&2
+	exit 2
+}
+id="$1"
+
+catalog="${STRATA_CATALOG:-/usr/lib/strata/strata-catalog}"
+lib="${STRATA_LIB:-/var/lib/strata}"
+etc="${STRATA_ETC:-/etc/strata}"
+conf="${etc}/${id}/daemon.conf"
+dir="${lib}/${id}"
+cfg="${dir}/strata-${id}.json"
+
+[[ -x ${catalog} ]] || {
+	echo "strata-models-inspect: ${catalog} is missing - app-ai/strata does not seem to be installed" >&2
+	exit 1
+}
+echo "strata@${id}"
+
+pair="$( "${catalog}" for-id "${id}" 2>/dev/null)" || pair=""
+if [[ -n ${pair} ]]; then
+	family="${pair%%/*}"
+	model="${pair#*/}"
+	echo "  catalog:    ${pair}"
+	show="$( "${catalog}" show "${model}")"
+	about="$(sed -n 's/^about=//p' <<<"${show}")"
+	[[ -n ${about} ]] && echo "  about:      ${about}"
+	dl="$(sed -n 's/^download_gb=//p' <<<"${show}")"
+	ram="$(sed -n 's/^ram_gb=//p' <<<"${show}")"
+	arena="$(sed -n 's/^arena_gb=//p' <<<"${show}")"
+	echo "  sizes:      download ${dl:-?} GB, RAM ${ram:-?} GB, VRAM ${arena:-?} GB"
+	if lic="$( "${catalog}" license "${family}" 2>/dev/null)"; then
+		echo "  license:    ${lic}"
+		echo "              (gated: accept it upstream and set HF_TOKEN before downloading)"
+	else
+		echo "  license:    free - no gate for family '${family}'"
+	fi
+else
+	echo "  catalog:    '${id}' is not an id this catalog produces (see strata-list-available)"
+fi
+
+echo "  instance:"
+if [[ -f ${cfg} ]]; then
+	echo "    run config: ${cfg}"
+	data_dir="$(sed -n 's/.*"data_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${cfg}" | head -n 1)"
+	[[ -n ${data_dir} ]] && echo "    weights:    ${data_dir}" || data_dir="${dir}/Strata-data"
+	if [[ -d ${data_dir} ]]; then
+		# strata's tree is 0750: other users cannot read the sizes
+		size="$(du -sh "${data_dir}" 2>/dev/null | cut -f1)"
+		echo "    size:       ${size:-not readable here (strata owns the files)}"
+	fi
+else
+	echo "    run config: not installed (no ${cfg})"
+fi
+if [[ -f ${conf} ]]; then
+	port="$(sed -n 's/^[[:space:]]*STRATA_PORT=//p' "${conf}" | tail -n 1)"
+	echo "    env file:   ${conf} (port ${port:-8080})"
+else
+	echo "    env file:   none (${conf})"
+fi
+echo "    engine:     shared component, /var/lib/strata/.local/share/strata/components/engine"
+
+state="$(systemctl show -p ActiveState --value "strata@${id}.service" 2>/dev/null)" || state="?"
+[[ -n ${state} ]] || state="?"
+echo "  service:    ${state}"
+
+if [[ -z ${pair} ]]; then
+	exit 1
+fi
+if [[ ! -f ${cfg} ]]; then
+	echo "strata-models-inspect: strata@${id} is not installed (no ${cfg})" >&2
+	echo "  download it with strata-download-model ${pair}, see strata-list-available" >&2
+	exit 1
+fi

@@ -431,18 +431,48 @@ EOF
 		dobin "${vbin}"
 	fi
 
-	# system service: static unit, address/port env file and a server config
-	# template the sysadmin fills in. Engine registration is the helper's job
-	# (runtime decision), so the unit needs no build-time templating.
+	# System service: a templated unit (one unit per model instance, started
+	# explicitly - the template has no [Install] section), the env file the
+	# per-instance copies are made from, and the host-facing model tools.
+	# Engine registration is the helper's job (runtime decision), so the unit
+	# needs no build-time templating. Deliberately no static strata.service
+	# and no /etc/strata/strata.json: which model serves the host is a host
+	# decision, and the one host port (8080 by default) can only be held by
+	# one instance at a time.
 	if use cuda || use hip; then
+		# The helper runs as an ExecStartPre of strata@.service, i.e. under
+		# User=strata - a sandboxed non-root user cannot execute files under
+		# /usr/bin in this configuration (the same reason the engine folder
+		# lives under /usr/lib), so it belongs to the libdir, not the bindir.
 		exeinto /usr/lib/strata
 		newexe "${FILESDIR}/strata-engine-register" engine-register
 	fi
-	systemd_dounit "${FILESDIR}/strata.service"
-	insinto /etc/strata
-	doins "${FILESDIR}/daemon.conf" "${FILESDIR}/strata.json"
-	fperms 0640 /etc/strata/strata.json
-	fowners root:strata /etc/strata/strata.json
+
+	# The catalog helper is what the /usr/bin model tools ask their questions
+	# to; administrators do not run it directly, so it sits in the libdir
+	# beside the engine helper. Its plain '#!/usr/bin/env python3' shebang is
+	# fine: it only parses source files with the stdlib ast module.
+	exeinto /usr/lib/strata
+	doexe "${FILESDIR}/strata-catalog"
+	# pkgcheck bans '@' in files/ names, so the packaged template unit is
+	# stored without it and installed under the name systemd expects.
+	systemd_newunit "${FILESDIR}/strata.template.service" strata@.service
+
+	# The model tools are run by an administrator directly, so they live in
+	# /usr/bin like the other CLIs.
+	exeinto /usr/bin
+	doexe "${FILESDIR}/strata-list-available"
+	doexe "${FILESDIR}/strata-download-model"
+	doexe "${FILESDIR}/strata-list-installed"
+	doexe "${FILESDIR}/strata-models-inspect"
+	doexe "${FILESDIR}/strata-rm-model"
+
+	# The packaged env file is a default, world-readable because it holds no
+	# secrets; a copy that gets credentials must be tightened to 0640
+	# root:strata - the tools refuse to use or ship anything else.
+	insinto /etc/strata/instances.d
+	doins "${FILESDIR}/strata-model-instance.conf"
+	fperms 0644 /etc/strata/instances.d/model-instance.conf
 
 	dodoc "${S}/README.md" "${FILESDIR}/README.gentoo"
 }
@@ -451,27 +481,39 @@ pkg_postinst() {
 	if use cuda || use hip; then
 		elog "Strata's engine was installed as a component folder under"
 		elog "  ${EPREFIX}/usr/lib/strata/engine/"
-		elog "strata.service registers it on first start (helper"
-		elog "/usr/lib/strata/engine-register); other users can register it with:"
+		elog "strata@.service registers it before every instance starts"
+		elog "(helper /usr/lib/strata/engine-register); other users can"
+		elog "register it with:"
 		elog "  strata components add-build ${EPREFIX}/usr/lib/strata/engine/<folder>"
 	else
 		elog "Built without the cuda or hip USE flag: Strata has no CPU-only"
 		elog "engine upstream. Enable USE=cuda or USE=hip for the local engine,"
 		elog "or let 'strata setup' fetch one."
 	fi
-	elog "Models are not shipped with the package; see"
-	elog "  ${EPREFIX}/usr/share/doc/${PF}/README.gentoo"
 	if ! use monitor; then
 		ewarn "USE=-monitor: 'strata monitor' needs dev-python/textual."
 	fi
-	elog "The web server is packaged as strata.service but not enabled"
-	elog "automatically - starting a server on every boot needs explicit"
+	elog "The web server is packaged as the strata@.service template - one"
+	elog "unit per model instance, and nothing is enabled or started"
+	elog "automatically: serving the host is a three-step act of explicit"
 	elog "consent (exposure, resource use):"
-	elog "  systemctl enable --now strata"
-	elog "Address/port: ${EPREFIX}/etc/strata/daemon.conf; the engine config"
-	elog "${EPREFIX}/etc/strata/strata.json still holds REPLACE placeholders"
-	elog "(model path, tokenizer) - fill them in and put models under"
-	elog "${EPREFIX}/var/lib/strata (owned by user strata)."
+	elog "  1. strata-list-available [family]    - what can be installed"
+	elog "  2. strata-download-model <family>/<model>"
+	elog "     (downloads the model and prepares its config and state dir)"
+	elog "  3. systemctl start strata@<model>    - logs: journalctl -u strata@<model>"
+	elog "Address and port live in"
+	elog "  ${EPREFIX}/etc/strata/<model>/daemon.conf"
+	elog "(default port 8080 - one port, one instance at a time; set"
+	elog "STRATA_PORT for the next one). Installed instances:"
+	elog "strata-list-installed; details: strata-models-inspect <model>;"
+	elog "remove again: strata-rm-model <model>. Models are not shipped with"
+	elog "the package; see ${EPREFIX}/usr/share/doc/${PF}/README.gentoo"
+	ewarn "This update drops the static strata.service and the config"
+	ewarn "template /etc/strata/strata.json. Configs you edited yourself are"
+	ewarn "kept by portage, but if the old service was enabled its enablement"
+	ewarn "now points at a removed unit:"
+	ewarn "  systemctl disable strata && systemctl daemon-reload"
+	ewarn "and serve a model through strata@<model> instead."
 	# the manager must notice a replaced unit file; the guarded call degrades
 	# to a warning when the sandbox blocks the D-Bus/private-socket hop
 	if [[ -d ${ROOT}/run/systemd/system ]]; then

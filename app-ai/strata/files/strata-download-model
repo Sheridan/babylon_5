@@ -1,0 +1,219 @@
+#!/bin/bash
+# Install a catalog model as a strata@<id> service instance: download into the
+# instance state directory (the upstream installer writes the run config there
+# too), prepare the per-instance env file the unit reads.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+usage: strata-download-model [-y|--yes] <family>/<model>
+
+Installs a catalog model as a service instance (downloads are tens of GB; see
+strata-list-available for family/model pairs and their sizes):
+
+    /var/lib/strata/<id>/Strata-data     model weights (instance state)
+    /var/lib/strata/<id>/strata-<id>.json
+                                         the run config the unit starts from
+                                         (written by the upstream installer;
+                                         its exe names the shared engine
+                                         component, so instances never
+                                         re-download the engine)
+    /etc/strata/<id>/daemon.conf         address/port of this instance
+                                         (default STRATA_PORT=8080; a second
+                                         instance needs another port - one
+                                         port, one running instance)
+
+The instance id comes from the catalog pair, exactly as the upstream installer
+names its run config: qwen/Q2_0 -> instance "q2_0", unsloth/UD-Q5_K_XL ->
+"unsloth-ud-q5_k_xl", gyro/Gyro-S -> "gyro-gyro-s". Start and watch it:
+
+    systemctl start strata@q2_0 && journalctl -u strata@q2_0
+
+An invalid pair is refused before anything is created. Re-running the command
+for a half-installed model RESUMES the interrupted download (the installer
+re-checks every file and continues where it stopped); an already installed
+model is refused - remove it with strata-rm-model first if you mean to
+reinstall.
+
+Gated models (the swift and gyro families, see strata-list-available) need an
+accepted license upstream and a token: export HF_TOKEN (or HUGGING_FACE_HUB_TOKEN)
+in the caller's environment, or put it in /etc/strata/<id>/daemon.conf before
+(start of) the download and keep that file 0640 root:strata.
+
+-y, --yes   no confirmation prompt (for scripting; the license gates are
+            answered like the installer's own --yes: recommended defaults)
+
+Runs as root: the instance lives in strata's state directory and everything
+created belongs to the service user strata. The download itself is delegated
+to the upstream installer (setup.py of the dev tree at /usr/share/strata, run
+as strata), so this script works only when app-ai/strata is installed.
+EOF
+}
+
+yes=0
+target=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-y | --yes) yes=1 ;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		-*)
+			echo "strata-download-model: unknown option: $1 (see --help)" >&2
+			exit 2
+			;;
+		*)
+			[[ -z ${target} ]] || {
+				echo "strata-download-model: one target at a time" >&2
+				exit 2
+			}
+			target="$1"
+			;;
+	esac
+	shift
+done
+[[ -n ${target} ]] || {
+	usage >&2
+	exit 2
+}
+[[ ${target} == */* ]] || {
+	echo "strata-download-model: expected <family>/<model>, e.g. qwen/Q2_0 or unsloth/UD-Q5_K_XL (families and models: strata-list-available)" >&2
+	exit 2
+}
+family="${target%%/*}"
+model="${target#*/}"
+[[ -n ${model} && ${model} != */* ]] || {
+	echo "strata-download-model: expected <family>/<model>, e.g. qwen/Q2_0 (one slash, nothing after the model)" >&2
+	exit 2
+}
+
+lib="${STRATA_LIB:-/var/lib/strata}"
+etc="${STRATA_ETC:-/etc/strata}"
+default_conf="${STRATA_DEFAULT_CONF:-/etc/strata/instances.d/model-instance.conf}"
+setup_py="${STRATA_SETUP_PY:-/usr/share/strata/setup.py}"
+service_user="${STRATA_SERVICE_USER:-strata}"
+catalog="${STRATA_CATALOG:-/usr/lib/strata/strata-catalog}"
+
+# The catalog is the only thing that knows which pairs exist and which id the
+# installer will give them; refuse a bad pair BEFORE creating any directory.
+[[ -x ${catalog} ]] || {
+	echo "strata-download-model: ${catalog} is missing - app-ai/strata does not seem to be installed" >&2
+	exit 1
+}
+if ! "${catalog}" models "${family}" >/dev/null 2>&1; then
+	echo "strata-download-model: '${family}' is not a supported family" >&2
+	echo "  families: $( "${catalog}" families 2>/dev/null || echo '?')  (details: strata-list-available)" >&2
+	exit 2
+fi
+if ! id="$( "${catalog}" id "${family}" "${model}" 2>/dev/null)"; then
+	echo "strata-download-model: '${model}' is not offered under family '${family}'" >&2
+	echo "  models: $( "${catalog}" models "${family}" | tr '\n' ' ')  (details: strata-list-available ${family})" >&2
+	exit 2
+fi
+
+if [[ ${EUID} -ne 0 ]]; then
+	echo "strata-download-model: must run as root (writes ${lib:?} and ${etc:?})" >&2
+	exit 1
+fi
+
+dir="${lib}/${id}"
+data_dir="${dir}/Strata-data"
+cfg="${dir}/strata-${id}.json"
+
+[[ -d ${lib} ]] || {
+	echo "strata-download-model: ${lib} is missing - app-ai/strata does not seem to be installed" >&2
+	exit 1
+}
+[[ -f ${setup_py} ]] || {
+	echo "strata-download-model: ${setup_py} is missing - app-ai/strata does not seem to be installed" >&2
+	exit 1
+}
+[[ -f ${default_conf} ]] || {
+	echo "strata-download-model: ${default_conf} is missing - app-ai/strata does not seem to be installed" >&2
+	exit 1
+}
+
+resume=0
+if [[ -f ${cfg} ]]; then
+	echo "strata-download-model: instance '${id}' is already installed (${cfg})" >&2
+	echo "  remove it first with strata-rm-model ${id} if you mean to reinstall" >&2
+	exit 1
+fi
+if [[ -d ${data_dir} ]]; then
+	# partial download of an earlier interrupted run - the installer resumes
+	resume=1
+fi
+
+if [[ ${resume} == 1 ]]; then
+	echo "resuming the interrupted download of ${family}/${model} into ${data_dir}"
+elif [[ ${yes} != 1 ]]; then
+	read -rp "Download ${family}/${model} into ${data_dir}? [y/N] " reply
+	[[ ${reply,,} == y* ]] || exit 1
+fi
+
+# The instance env file may already carry a token the operator set for a
+# gated model; honour it in addition to the caller's environment. sudo would
+# strip the caller's env, so the token travels as an explicit env assignment.
+token_args=()
+if [[ -f ${etc}/${id}/daemon.conf ]]; then
+	file_token="$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}HF_TOKEN=//p' "${etc}/${id}/daemon.conf" | tail -n 1 | tr -d '"')"
+	[[ -n ${file_token} ]] && token_args=(env "HF_TOKEN=${file_token}")
+elif [[ -n ${HF_TOKEN:-} ]]; then
+	token_args=(env "HF_TOKEN=${HF_TOKEN}")
+elif [[ -n ${HUGGING_FACE_HUB_TOKEN:-} ]]; then
+	token_args=(env "HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}")
+fi
+
+# Run the upstream installer as the service user so every downloaded file is
+# born owned by strata. STRATA_CONTROL_INSTALL/STRATA_INSTALL_DIR put it in
+# CONTROL mode: the run config lands in the instance folder named
+# strata-<tag><model-lower>.json (the tag from the family - exactly the id
+# derived above), and it installs no Python and starts no server. --data-dir
+# is mandatory: without it the weights would land in the installer's home.
+# --yes answers every question with its recommended default, the license and
+# size prompts included (a gated model without a valid token still stops).
+# install -d only gives -o/-g to the last component, so create the instance
+# directory itself first: the installer runs as ${service_user} and must be
+# able to write strata-<id>.json into it.
+install -d -m 0750 -o "${service_user}" -g "${service_user}" "${dir}"
+install -d -m 0750 -o "${service_user}" -g "${service_user}" "${data_dir}"
+if ! sudo -u "${service_user}" env "HOME=${lib}" \
+	STRATA_CONTROL_INSTALL=1 STRATA_INSTALL_DIR="${dir}" \
+	"${token_args[@]}" \
+	"${setup_py}" --family "${family}" --model "${model}" \
+	--data-dir "${data_dir}" --yes --no-start; then
+	# a first download that failed leaves nothing behind; a failed re-run
+	# keeps the resume state for the next try
+	if [[ ${resume} == 0 && ! -f ${cfg} ]]; then
+		rm -rf -- "${dir}"
+	fi
+	echo "strata-download-model: the installer failed; see its output above" >&2
+	echo "  re-running this script resumes an interrupted download" >&2
+	exit 1
+fi
+
+# The env file the unit reads (EnvironmentFile=/etc/strata/%i/daemon.conf);
+# never overwrite an edited copy.
+if [[ -e ${etc}/${id}/daemon.conf ]]; then
+	echo "keeping the existing ${etc}/${id}/daemon.conf"
+else
+	install -d -m 0755 "${etc}/${id}"
+	# the copy may receive HF_TOKEN later - keep the group read bit for the
+	# service user, and tighten it in the same step the token goes in.  Run as
+	# root, install creates the file owned by root already.
+	install -m 0640 -g "${service_user}" "${default_conf}" "${etc}/${id}/daemon.conf"
+fi
+
+cat <<EOF
+
+Installed: ${family}/${model} as instance '${id}'
+  config:   ${cfg}
+  env file: ${etc}/${id}/daemon.conf  (host/port; edit before starting,
+            0640 root:${service_user} set on a fresh copy - keep it when you
+            add HF_TOKEN)
+  start:    systemctl start strata@${id}
+  logs:     journalctl -u strata@${id}
+One port serves one instance: if another instance already holds 8080, give
+this one a different STRATA_PORT in the env file first.
+EOF

@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Read the upstream model catalog out of the packaged code without running it.
+
+The catalog - FAMILIES and MODELS in setup.py, SUPPORTED_SELECTIONS in
+strata_control/models.py - is the single source of truth: strata-list-available,
+strata-models-inspect and strata-download-model ask it which family/model pairs
+can be installed, what a model costs to download and run, and which instance id
+a pair gets.  Upstream names the run config of an installed model after
+f"{family tag}{model}" (setup.py writes home()/strata-<tag+model>.json), so the
+strata@<id> instance of e.g. unsloth/UD-Q5_K_XL is strata@unsloth-ud-q5_k_xl.
+The scripts must use exactly that id, so it is derived here, from the catalog.
+
+The files are only parsed (ast), never imported: setup.py at import time is the
+interactive installer.  Its FAMILIES build Hugging Face urls with a small hf()
+helper, which plain literal_eval cannot read, so the handful of constant nodes
+is picked out of the tree instead.
+
+Subcommands:
+    families             supported families: name<TAB>tag<TAB>title
+    models [family]      supported pairs: family<TAB>MODEL<TAB>id<TAB>download_gb
+                         <TAB>ram_gb<TAB>arena_gb<TAB>gate (gate = gated or -)
+    license <family>     the family's license text, if the catalog carries one
+    id <family> <MODEL>  the instance id of a supported pair
+    for-id <id>          the family/MODEL an instance id was derived from
+    show <MODEL>         everything known about one model, key=value lines
+Exit 2 for an unknown family/model/pair/id (message on stderr).
+
+Environment: STRATA_CODE points at the installed Strata code (a test hook; the
+package installs it as /usr/share/strata).  Do not confuse it with STRATA_LIB,
+the service users' instance directory /var/lib/strata.
+"""
+
+import ast
+import os
+import sys
+from pathlib import Path
+
+DEFAULT_CODE = "/usr/share/strata"
+
+#: families whose download asks for an accepted license upstream (the catalog
+#: carries their FAMILIES[..]["license"] text); everything else downloads freely
+GATED = ("swift", "gyro")
+
+
+def die(msg: str) -> None:
+    print(f"strata-catalog: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def code_file(relative: str) -> Path:
+    path = Path(os.environ.get("STRATA_CODE", DEFAULT_CODE)) / relative
+    if not path.is_file():
+        die(f"no catalog found: {path} is not a file (set STRATA_CODE to the Strata code folder)")
+    return path
+
+
+def _const(node):
+    return node.value if isinstance(node, ast.Constant) else None
+
+
+def _call_str(node, fname):
+    """First string argument of a call like hf("https://...") anywhere in the node."""
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id == fname and sub.args:
+            value = _const(sub.args[0])
+            if isinstance(value, str):
+                return value
+    return None
+
+
+def _dict_fields(node):
+    """Constant scalar fields of a dict literal; hf()-built urls get their url string."""
+    fields = {}
+    if not isinstance(node, ast.Dict):
+        return fields
+    for key, value in zip(node.keys, node.values):
+        name = _const(key)
+        if not isinstance(name, str):
+            continue
+        value_ = _const(value)
+        if isinstance(value_, (str, int, float)):
+            fields[name] = value_
+        elif isinstance(value, ast.Tuple):
+            items = [_const(elt) for elt in value.elts]
+            if all(isinstance(item, str) for item in items):
+                fields[name] = tuple(items)
+        else:
+            url = _call_str(value, "hf")
+            if url:
+                fields[name] = url
+    return fields
+
+
+def _assignments(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and node.targets and isinstance(node.targets[0], ast.Name):
+            yield node.targets[0].id, node.value
+
+
+def load():
+    """(families, models, supported pairs) from the two source files."""
+    families, models, pairs = {}, {}, []
+    setup = ast.parse(code_file("setup.py").read_text(encoding="utf-8"), filename="setup.py")
+    for name, value in _assignments(setup):
+        if name == "FAMILIES" and isinstance(value, ast.Dict):
+            for key, entry in zip(value.keys, value.values):
+                family = _const(key)
+                if isinstance(family, str):
+                    families[family] = _dict_fields(entry)
+        elif name == "MODELS" and isinstance(value, ast.Dict):
+            for key, entry in zip(value.keys, value.values):
+                model = _const(key)
+                if isinstance(model, str):
+                    models[model] = _dict_fields(entry)
+    # the pairs that can actually be installed live in the control module: a
+    # family/model only works when its files are complete, and that module is
+    # where upstream records it
+    control = ast.parse(code_file("strata_control/models.py").read_text(encoding="utf-8"),
+                        filename="models.py")
+    for name, value in _assignments(control):
+        if name == "SUPPORTED_SELECTIONS":
+            container = value.args[0] if (isinstance(value, ast.Call) and value.args) else value
+            for element in getattr(container, "elts", []):
+                pair = _const(element)
+                if isinstance(pair, str) and "/" in pair:
+                    pairs.append(pair)
+    if not families or not pairs:
+        die("the installed code carries no FAMILIES/SUPPORTED_SELECTIONS: refusing to guess which models are offered")
+    return families, models, pairs
+
+
+def instance_id(family: str, model: str, families) -> str:
+    """The id upstream gives this pair: the family tag (setup.py FAMILIES) plus
+    the model, lower-cased - the run config is named strata-<id>.json."""
+    tag = families.get(family, {}).get("tag", "")
+    return f"{tag}{model}".lower()
+
+
+def check_family(families, pairs, family):
+    if family not in families or not any(pair.startswith(family + "/") for pair in pairs):
+        die(f"unknown family {family!r}; supported families: "
+            + ", ".join(sorted({pair.split('/', 1)[0] for pair in pairs})))
+
+
+def check_pair(families, pairs, family, model):
+    check_family(families, pairs, family)
+    if f"{family}/{model}" not in pairs:
+        die(f"{family}/{model} is not an offered selection; see strata-list-available {family}")
+
+
+def main(argv):
+    command = argv[0] if argv else ""
+
+    if command in ("-h", "--help", "help"):
+        print("usage: strata-catalog families|models [family]|license <family>"
+              "|id <family> <MODEL>|for-id <id>|show <MODEL>")
+        print()
+        print("Reads the upstream model catalog - FAMILIES and MODELS in setup.py,")
+        print("SUPPORTED_SELECTIONS in strata_control/models.py - out of the installed")
+        print("Strata code (STRATA_CODE, default /usr/share/strata) without importing")
+        print("it, and answers the questions the management scripts ask: which family/")
+        print("model pairs can be installed, what a model costs, which strata@<id> a")
+        print("pair gets.  All output is TAB-separated or key=value, for scripts.")
+        print()
+        print("  families         name<TAB>tag<TAB>title for every family with a supported model")
+        print("  models [family]  family<TAB>MODEL<TAB>id<TAB>download_gb<TAB>ram_gb"
+              "<TAB>arena_gb<TAB>gate")
+        print("                   for every supported pair (gate is 'gated' or '-')")
+        print("  license <family> the license text a gated family's download is behind")
+        print("  id <family> MODEL   the instance id of a supported pair, e.g. qwen UD-Q5_K_XL")
+        print("  for-id <id>      the family/MODEL an instance id was derived from")
+        print("  show <MODEL>     everything known about one model, key=value lines")
+        print()
+        print("Exit 2 for an unknown family, model, pair or id (message on stderr).")
+        return
+
+    families, models, pairs = load()
+
+    if command == "families":
+        for family in families:
+            if any(pair.startswith(family + "/") for pair in pairs):
+                print("\t".join((family, families[family].get("tag", ""), families[family].get("title", ""))))
+
+    elif command == "models":
+        wanted = argv[1] if len(argv) > 1 else None
+        if wanted:
+            check_family(families, pairs, wanted)
+        for pair in pairs:
+            family, model = pair.split("/", 1)
+            if wanted and family != wanted:
+                continue
+            info = models.get(model, {})
+            print("\t".join(str(part) for part in (
+                family, model, instance_id(family, model, families),
+                info.get("download_gb", "?"), info.get("ram_gb", "?"), info.get("arena_gb", "?"),
+                "gated" if family in GATED else "-",
+                info.get("about", ""))))
+
+    elif command == "license":
+        family = argv[1] if len(argv) > 1 else die("license needs a family")
+        check_family(families, pairs, family)
+        text = families.get(family, {}).get("license")
+        if not text:
+            print(f"the catalog carries no license text for {family}")
+            sys.exit(1)
+        print(text)
+
+    elif command == "id":
+        if len(argv) < 3:
+            die("id needs a family and a model")
+        family, model = argv[1], argv[2]
+        check_pair(families, pairs, family, model)
+        print(instance_id(family, model, families))
+
+    elif command == "for-id":
+        # the reverse of `id`: an installed strata@<id> names its catalog pair,
+        # e.g. unsloth-ud-q5_k_xl -> unsloth/UD-Q5_K_XL
+        wanted = argv[1] if len(argv) > 1 else die("for-id needs an instance id")
+        for pair in pairs:
+            family, model = pair.split("/", 1)
+            if instance_id(family, model, families) == wanted.lower():
+                print(pair)
+                return
+        die(f"no catalog pair produces the instance id {wanted!r}")
+
+    elif command == "show":
+        model = argv[1] if len(argv) > 1 else die("show needs a model")
+        if model not in models and not any(pair.endswith("/" + model) for pair in pairs):
+            die(f"unknown model {model!r}; see strata-list-available")
+        info = models[model]
+        print(f"model={model}")
+        for key in ("about", "download_gb", "ram_gb", "arena_gb"):
+            if key in info:
+                print(f"{key}={info[key]}")
+        for pair in pairs:
+            family, named = pair.split("/", 1)
+            if named != model:
+                continue
+            fam = families.get(family, {})
+            print(f"family={family}")
+            print(f"family.title={fam.get('title', family)}")
+            print(f"family.gate={'gated' if family in GATED else '-'}")
+            if fam.get("by"):
+                print(f"family.by={fam['by']}")
+            if fam.get("about"):
+                print(f"family.about={fam['about']}")
+            if fam.get("hf"):
+                print(f"family.hf={fam['hf']}")
+            if fam.get("file"):
+                print(f"family.file={fam['file']}")
+            if fam.get("license"):
+                print(f"family.license={fam['license']}")
+            print(f"instance={instance_id(family, model, families)}")
+
+    else:
+        die("usage: strata-catalog families|models [family]|license <family>|id <family> <MODEL>|for-id <id>|show <MODEL>")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

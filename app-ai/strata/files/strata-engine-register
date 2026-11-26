@@ -1,11 +1,12 @@
 #!/bin/sh
 # Register the system-built engine component in strata's state directory.
-# Called as strata.service's ExecStartPre as root, before the server starts.
+# Called as strata@.service's ExecStartPre as the service user (User=strata),
+# before the server of the model instance starts.
 #
 # Engine registration is a convenience: strata resolves components per user
 # and can run without this entry (users may register their own builds). The
 # script therefore never fails the unit: every error path prints to stderr
-# (visible in `journalctl -u strata`) and exits 0. The stamp file makes the
+# (visible in `journalctl -u strata@<id>`) and exits 0. The stamp file makes the
 # registration happen once; removing it repeats the registration after a
 # component folder changes.
 set -u

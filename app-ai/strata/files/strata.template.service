@@ -1,0 +1,44 @@
+[Unit]
+Description=Strata local LLM inference server (model %i)
+Documentation=file:///usr/share/doc/strata/README.gentoo
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=strata
+Group=strata
+# Control mode for one installed model: the instance state dir comes from
+# STRATA_INSTALL_DIR (upstream reads it only together with STRATA_CONTROL_INSTALL).
+# Which model the instance serves is defined by the run config strata-<id>.json
+# in that directory, never by an environment variable: upstream derives the
+# instance id from the config file name and checks it against the config's
+# model_id - a mismatch is refused at startup.
+Environment=STRATA_CONTROL_INSTALL=1 STRATA_INSTALL_DIR=/var/lib/strata/%i HOME=/var/lib/strata
+# the host address/port knob, adjusted per instance; optional Hugging Face token
+# and proxy settings also belong here. 0640 root:strata: the service reads it
+# as User=strata, group allows that without making the file world-readable
+EnvironmentFile=/etc/strata/%i/daemon.conf
+ExecStartPre=/usr/lib/strata/engine-register
+# the model itself comes from the run config --profile names: serve takes no
+# --engine (it only accepts strata|mock there), it resolves the engine the
+# config's own engine field points at, i.e. the shared component
+ExecStart=/usr/bin/strata serve --profile /var/lib/strata/%i/strata-%i.json --host ${STRATA_HOST} --port ${STRATA_PORT}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# the whole tree stays writable for the service: instances are added and
+# removed while the server runs, so /var/lib/strata cannot be read-only
+ReadWritePaths=/var/lib/strata
+SupplementaryGroups=video render
+# a serving model is useless to the host without a timeout - a wedged engine
+# process must not hold the unit forever (watchdog semantics are a follow-up)
+TimeoutStopSec=30
+
+# Deliberately no [Install] section: the template cannot be enabled as such,
+# and instances are never started or enabled automatically.
