@@ -303,8 +303,8 @@ EOF
 			echo "Contents of this Strata engine component folder:"
 			echo
 			echo "Strata engine, helpers and own shared libraries - MIT license"
-			printf '\t%s\n' 'LICENSE.txt'
-			printf '\t%s\n' "${bundled_own[@]}"
+			# one printf: with an empty array a bare format would print a tab
+			printf '\t%s\n' 'LICENSE.txt' "${bundled_own[@]}"
 			if [[ ${#bundled_cuda[@]} -gt 0 ]]; then
 				echo
 				echo "Shared libraries copied from dev-util/nvidia-cuda-toolkit -"
