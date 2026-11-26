@@ -7,7 +7,7 @@
 ## Requirements
 
 ### Requirement: Пакет доступен из оверлея как бинарная поставка
-Оверлей `babylon_5` SHALL предоставлять пакет `app-ai/opencode-bin` (версия 1.19.6, тег `v1.19.6`) с корректным Manifest, лицензией MIT и KEYWORDS `~amd64`: исполняемый файл берётся из готового архива GitHub Releases по SRC_URI с проверкой digest, без компиляции и без исходного дерева upstream.
+Оверлей `babylon_5` SHALL предоставлять пакет `app-ai/opencode-bin` (версия 2.4.1, тег `v2.4.1`) с корректным Manifest, лицензией MIT и KEYWORDS `~amd64`: исполняемый файл берётся из готового архива GitHub Releases по SRC_URI с проверкой digest, без компиляции; текст лицензии MIT SHALL входить в пакет и получается из репозитория на теге релиза (релизы 2.x не поставляют LICENSE ассетом).
 
 #### Scenario: Установка из оверлея
 - **WHEN** пользователь с подключённым оверлеем `babylon_5` выполняет `emerge app-ai/opencode-bin`
@@ -15,7 +15,11 @@
 
 #### Scenario: Версия установленного CLI
 - **WHEN** сразу после установки выполнить `/usr/bin/opencode --version`
-- **THEN** CLI печатает `1.19.6` и завершается кодом 0
+- **THEN** CLI печатает `2.4.1` и завершается кодом 0
+
+#### Scenario: Текст лицензии в пакете
+- **WHEN** после установки выполнить `qlist app-ai/opencode-bin`
+- **THEN** в составе пакета есть файл `/usr/share/doc/${PF}/LICENSE` с текстом MIT-лицензии
 
 ### Requirement: Выбор варианта бинарника архитектурой и USE-флагом
 SRC_URI пакета SHALL выбирать вариант ассета релиза по профилю машины: `amd64` + `elibc_glibc`/`elibc_musl` и `IUSE="baseline"` (native по умолчанию, baseline — для старых CPU); каждый вариант имеет отдельный distfile с собственным digest.
