@@ -470,8 +470,12 @@ EOF
 	# The packaged env file is a default, world-readable because it holds no
 	# secrets; a copy that gets credentials must be tightened to 0640
 	# root:strata - the tools refuse to use or ship anything else.
+	# The files/ name carries the package prefix; the installed name is the
+	# plain one the tools look for as STRATA_DEFAULT_CONF default, so newins
+	# (a doins here silently installs the wrong name - caught by the first
+	# real merge, 26.11).
 	insinto /etc/strata/instances.d
-	doins "${FILESDIR}/strata-model-instance.conf"
+	newins "${FILESDIR}/strata-model-instance.conf" model-instance.conf
 	fperms 0644 /etc/strata/instances.d/model-instance.conf
 
 	dodoc "${S}/README.md" "${FILESDIR}/README.gentoo"
