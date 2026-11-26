@@ -19,6 +19,11 @@ SRC_URI="https://github.com/Textualize/textual/archive/refs/tags/v${PV}.tar.gz -
 LICENSE="MIT"
 SLOT="0"
 KEYWORDS="~amd64 ~arm64"
+# Vendored copy for app-ai/strata (USE=monitor): the snapshot test suite is
+# disabled because dev-python/textual-dev and dev-python/pytest-textual-snapshot
+# exist in ::guru only, and dev-python/httpx is deprecated in ::gentoo.
+# Everything else is kept byte-identical to ::guru for easy syncing.
+RESTRICT="test"
 
 RDEPEND="
 	>=dev-python/markdown-it-py-2.1.0[${PYTHON_USEDEP}]
@@ -48,19 +53,14 @@ declare -A SYNTAX_LANGS=(
 	# TODO Many other (common) languages are neither in ::gentoo nor ::guru
 )
 
-BDEPEND="
-	test? (
-		dev-python/httpx[${PYTHON_USEDEP}]
-		=dev-python/textual-dev-1.8*[${PYTHON_USEDEP}]
-		$(printf " dev-libs/tree-sitter-%s[python,${PYTHON_USEDEP}]" "${!SYNTAX_LANGS[@]}")
-	)
-"
+# The ::guru test? ( BDEPEND ) block is dropped together with RESTRICT="test"
+# above; the snapshot tests cannot run without the packages named there.
 
 DOCS+=( {CHANGELOG,README}.md )
 
 EPYTEST_PLUGINS=(
 	syrupy
-	pytest-{asyncio,textual-snapshot}
+	pytest-asyncio
 )
 EPYTEST_XDIST=1
 distutils_enable_tests pytest

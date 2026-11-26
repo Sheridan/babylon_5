@@ -1,0 +1,7 @@
+# Default USE flags for packages in this overlay.
+
+# The textual based `strata monitor` TUI is part of the documented workflow,
+# so it is enabled by default for every user of this overlay.  Mask it with
+# `app-ai/strata -monitor` to build without it (this also drops the
+# dev-python/textual dependency).
+app-ai/strata monitor

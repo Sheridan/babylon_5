@@ -1,7 +1,9 @@
 EAPI=8
 
-PYTHON_COMPAT=( python3_{10..15} )
-inherit cmake python-single-r1 systemd
+# python3_13/14 only: dev-python/textual (USE=monitor) supports nothing else,
+# and both targets are the profile default on amd64.
+PYTHON_COMPAT=( python3_{13..14} )
+inherit cmake multiprocessing python-single-r1 systemd
 
 DESCRIPTION="Local-first LLM workstation: C++ inference engine, CLI and local web server"
 HOMEPAGE="https://github.com/Niko1221/Strata"
@@ -11,8 +13,12 @@ S="${WORKDIR}/Strata-${PV}"
 LICENSE="MIT cuda? ( NVIDIA-CUDA ) hip? ( AMD-GPU-PRO-EULA )"
 SLOT="0"
 KEYWORDS="~amd64"
+# monitor is enabled by default through profiles/package.use of this overlay
+# (EAPI 8 has no IUSE_DEFAULTS).
 IUSE="cuda hip vision monitor"
-IUSE_DEFAULTS="monitor"
+# Both GPU toolkits ship EULA licensed runtime libraries, which the engine
+# component folder embeds, so no binary packages and no distfile mirroring.
+RESTRICT="cuda? ( bindist mirror ) hip? ( bindist mirror )"
 REQUIRED_USE="
 	?? ( cuda hip )
 	${PYTHON_REQUIRED_USE}
