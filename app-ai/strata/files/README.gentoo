@@ -126,6 +126,19 @@ release), so no external repository is needed:
 
     emerge -av dev-python/textual
 
+Bundled licenses
+----------------
+With USE=cuda/hip the engine component folder embeds runtime libraries
+copied from the GPU toolkit: the NVIDIA ones (libcudart, libcublas,
+libcublasLt, libnvrtc and their dependencies) come from
+dev-util/nvidia-cuda-toolkit and are covered by the NVIDIA CUDA EULA
+(package LICENSE gains NVIDIA-CUDA); the ROCm packages build from source
+under MIT. Every component folder carries LICENSE.txt (Strata's MIT),
+LICENSE-BUNDLED.txt (which library belongs to which license), the CUDA
+EULA and upstream notices for libatomic/libz; the same texts are
+installed under /usr/share/licenses/<PACKAGE>-<VERSION>/ (for example
+/usr/share/licenses/strata-0.2.20/).
+
 Models
 ------
 No model weights ship with the package. Use `strata setup` or

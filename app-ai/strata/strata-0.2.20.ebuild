@@ -10,15 +10,23 @@ HOMEPAGE="https://github.com/Niko1221/Strata"
 SRC_URI="https://github.com/Niko1221/Strata/archive/refs/tags/v${PV}.tar.gz -> ${P}.tar.gz"
 S="${WORKDIR}/Strata-${PV}"
 
-LICENSE="MIT cuda? ( NVIDIA-CUDA ) hip? ( AMD-GPU-PRO-EULA )"
+# The engine component folder embeds runtime libraries copied from the GPU
+# toolkits. The NVIDIA ones are prebuilt binaries under the CUDA EULA, hence
+# the NVIDIA-CUDA license; dev-util/nvidia-cuda-toolkit declares the same.
+# The ROCm side (dev-util/hip and friends) builds from source and is MIT
+# licensed, already covered by the unconditional MIT, so the HIP side needs
+# no extra license identifier (AMD-GPU-PRO-EULA would be wrong: it covers
+# AMD's binary PRO distribution, not these packages).
+LICENSE="MIT cuda? ( NVIDIA-CUDA )"
 SLOT="0"
 KEYWORDS="~amd64"
 # monitor is enabled by default through profiles/package.use of this overlay
 # (EAPI 8 has no IUSE_DEFAULTS).
 IUSE="cuda hip vision monitor"
-# Both GPU toolkits ship EULA licensed runtime libraries, which the engine
-# component folder embeds, so no binary packages and no distfile mirroring.
-RESTRICT="cuda? ( bindist mirror ) hip? ( bindist mirror )"
+# The EULA licensed CUDA runtime libraries the component folder embeds
+# forbid binary redistribution and distfile mirroring; the MIT ROCm side
+# carries no such restriction.
+RESTRICT="cuda? ( bindist mirror )"
 REQUIRED_USE="
 	?? ( cuda hip )
 	${PYTHON_REQUIRED_USE}
@@ -249,6 +257,93 @@ EOF
 			[[ ${round} -eq 8 ]] && die "library closure did not converge"
 		done
 
+		# License paperwork. The closure copied EULA/MIT runtime libraries
+		# into the component, and package_engine.py packages top-level
+		# LICENSE* files, so the texts travel inside the component folder
+		# (it may be copied to other machines). ${src}/LICENSE-BUNDLED.txt
+		# inventories every .so: built in-tree (MIT) or copied from a
+		# toolkit (its license group).
+		cp "${S}/LICENSE" "${src}/LICENSE.txt" || die
+		local -a notice_stems=( )
+		local notice stem
+		for notice in "${S}"/tools/packaging/notices/*.txt; do
+			stem="$(basename "${notice}" .txt)"
+			# upstream notice only when that library is actually bundled
+			local -a notice_hits=( "${src}/${stem}".so* )
+			if [[ -e ${notice_hits[0]} ]]; then
+				cp "${notice}" "${src}/LICENSE-${stem}.txt" || die
+				notice_stems+=( "${stem}" )
+			fi
+		done
+		local -a bundled_own=( ) bundled_cuda=( ) bundled_rocm=( ) bundled_notice=( )
+		local so origin name hit
+		for so in "${src}"/*.so*; do
+			# *.so* also matches versioned SONAMEs such as libcublas.so.13
+			[[ -e ${so} ]] || continue
+			name="$(basename "${so}")"
+			origin=""
+			for dir in "${lib_roots[@]}"; do
+				[[ -e ${dir}/${name} ]] && { origin="${dir}"; break; }
+			done
+			hit=""
+			for stem in "${notice_stems[@]}"; do
+				[[ ${name} == "${stem}".so* ]] && { hit=${stem}; break; }
+			done
+			if [[ -n ${hit} ]]; then
+				bundled_notice+=( "${name} (see LICENSE-${hit}.txt)" )
+			elif [[ -z ${origin} ]]; then
+				bundled_own+=( "${name}" )
+			elif use cuda; then
+				bundled_cuda+=( "${name} (from ${origin})" )
+			else
+				bundled_rocm+=( "${name} (from ${origin})" )
+			fi
+		done
+		{
+			echo "Contents of this Strata engine component folder:"
+			echo
+			echo "Strata engine, helpers and own shared libraries - MIT license"
+			printf '\t%s\n' 'LICENSE.txt'
+			printf '\t%s\n' "${bundled_own[@]}"
+			if [[ ${#bundled_cuda[@]} -gt 0 ]]; then
+				echo
+				echo "Shared libraries copied from dev-util/nvidia-cuda-toolkit -"
+				echo "NVIDIA CUDA EULA (license group NVIDIA-CUDA), full text in"
+				echo "LICENSE-CUDA-EULA.txt:"
+				printf '\t%s\n' "${bundled_cuda[@]}"
+			fi
+			if [[ ${#bundled_rocm[@]} -gt 0 ]]; then
+				echo
+				echo "Shared libraries copied from the ROCm packages (dev-util/hip"
+				echo "and friends), built from source and MIT licensed:"
+				printf '\t%s\n' "${bundled_rocm[@]}"
+			fi
+			if [[ ${#bundled_notice[@]} -gt 0 ]]; then
+				echo
+				echo "System libraries bundled for portability, carrying their"
+				echo "upstream notices (written by the toolkit's packaging tools):"
+				printf '\t%s\n' "${bundled_notice[@]}"
+			fi
+		} > "${src}/LICENSE-BUNDLED.txt" || die
+		if use cuda; then
+			# the EULA text of the very toolkit that built the libraries; the
+			# fallback keeps the component carrying a pointer if a toolkit
+			# variant ever stops shipping the file
+			if [[ -r /opt/cuda/EULA.txt ]]; then
+				cp /opt/cuda/EULA.txt "${src}/LICENSE-CUDA-EULA.txt" || die
+			else
+				ewarn "dev-util/nvidia-cuda-toolkit shipped no /opt/cuda/EULA.txt;"
+				ewarn "the component only carries a reference to the NVIDIA-CUDA"
+				ewarn "license text managed by the license-tools eclasses."
+				{
+					echo 'The bundled CUDA runtime libraries are licensed under the'
+					echo 'NVIDIA CUDA EULA, license group "NVIDIA-CUDA" of the Gentoo'
+					echo 'license manager; the full text ships with the Gentoo'
+					echo 'repository under licenses/NVIDIA-CUDA.'
+				} > "${src}/LICENSE-CUDA-EULA.txt" || die
+			fi
+		fi
+
 		local -a arch_args=( ) min_driver=( )
 		local backend=cuda archs_json="" a
 		if use cuda; then
@@ -320,6 +415,12 @@ EOF
 			"${PYTHON}" "${S}/tools/packaging/package_engine.py" --verify "${comp%/}" \
 				|| die "engine component verification failed"
 		done
+
+		# Gentoo convention: the license texts of everything the package
+		# installs live under /usr/share/licenses/${PF}; the component folder
+		# carries the same files for machines it gets copied to.
+		dodir /usr/share/licenses/${PF}
+		cp "${src}"/LICENSE* "${ED}/usr/share/licenses/${PF}/" || die
 	elif use vision; then
 		# no engine folder would carry the picture reader, so ship it to a
 		# documented system location; copy it into an engine folder to use it
