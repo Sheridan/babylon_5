@@ -6,6 +6,6 @@
 		<name>Горлов Максим</name>
 	</maintainer>
 	<upstream>
-		<remote-id type="github">Sheridan/emerge-ai</remote-id>
+		<remote-id type="github">Sheridan/aimerge</remote-id>
 	</upstream>
 </pkgmetadata>
